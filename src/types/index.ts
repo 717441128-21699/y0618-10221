@@ -133,6 +133,8 @@ export interface MachineData {
 export interface ReportContentSnapshot {
   metricId: string;
   metricName: string;
+  sampleSize: number;
+  insufficientData?: boolean;
   controlChart: {
     ucl: number;
     cl: number;

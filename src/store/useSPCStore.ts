@@ -607,19 +607,53 @@ export const useSPCStore = create<SPCState>((set, get) => ({
       generatedBy: '当前用户',
     };
 
-    const reports = [...state.reports, generatingReport];
-    set({ reports });
-    saveToStorage(STORAGE_KEY_REPORTS, reports);
+    const initialReports = [...state.reports, generatingReport];
+    set({ reports: initialReports });
+    saveToStorage(STORAGE_KEY_REPORTS, initialReports);
 
     await new Promise(resolve => setTimeout(resolve, 800));
+
+    const periodMs = periodEnd - periodStart;
+    const pointsPerDay = 24 * 60 / 5;
+    const estimatedCount = Math.max(30, Math.min(300, Math.floor(periodMs / 86400000 * pointsPerDay)));
+
+    const MIN_SAMPLE_THRESHOLD = 20;
 
     const contents: ReportContentSnapshot[] = metricIds.map(metricId => {
       const metric = state.metricsConfig.find(m => m.id === metricId);
       if (!metric) return null;
 
-      const metricData = generateQualityData(120, metric.target, (metric.usl - metric.lsl) / 8, periodStart);
+      const metricData = generateQualityData(estimatedCount, metric.target, (metric.usl - metric.lsl) / 8, periodEnd);
       const filteredData = metricData.filter(d => d.timestamp >= periodStart && d.timestamp <= periodEnd);
-      const dataToUse = filteredData.length > 10 ? filteredData : metricData;
+
+      const insufficientData = filteredData.length < MIN_SAMPLE_THRESHOLD;
+      const dataToUse = filteredData;
+
+      if (dataToUse.length === 0) {
+        return {
+          metricId,
+          metricName: metric.name,
+          sampleSize: 0,
+          insufficientData: true,
+          controlChart: {
+            ucl: metric.usl,
+            cl: metric.target,
+            lcl: metric.lsl,
+            usl: metric.usl,
+            lsl: metric.lsl,
+          },
+          processCapability: {
+            cp: 0, cpk: 0, pp: 0, ppk: 0,
+            mean: metric.target,
+            stdDev: 0,
+          },
+          alarmSummary: {
+            totalCount: 0, criticalCount: 0, warningCount: 0,
+            topRules: [],
+          },
+          paretoData: [],
+        };
+      }
 
       const subgroups = generateSubgroups(dataToUse, state.subgroupSize);
       const limitsCalc = state.chartType === 'xbar-r'
@@ -683,6 +717,7 @@ export const useSPCStore = create<SPCState>((set, get) => ({
         metricId,
         metricName: metric.name,
         sampleSize: dataToUse.length,
+        insufficientData,
         controlChart: {
           ucl: controlLimits.ucl,
           cl: controlLimits.cl,
@@ -721,7 +756,8 @@ export const useSPCStore = create<SPCState>((set, get) => ({
       content: contents,
     };
 
-    const updatedReports = state.reports.map(r =>
+    const s = get();
+    const updatedReports = s.reports.map(r =>
       r.id === reportId ? completedReport : r
     );
     set({ reports: updatedReports });
@@ -766,9 +802,15 @@ export const useSPCStore = create<SPCState>((set, get) => ({
     report.content.forEach((content, idx) => {
       html += `
         <div style="margin-bottom: 35px; page-break-inside: avoid;">
-          <h2 style="font-size: 18px; font-weight: bold; color: #1e40af; margin: 0 0 15px 0; padding-left: 10px; border-left: 4px solid #3b82f6;">
+          <h2 style="font-size: 18px; font-weight: bold; color: #1e40af; margin: 0 0 10px 0; padding-left: 10px; border-left: 4px solid #3b82f6;">
             ${idx + 1}. ${content.metricName}
+            <span style="font-size: 12px; font-weight: normal; color: #64748b; margin-left: 10px;">样本数：${content.sampleSize}</span>
           </h2>
+          ${content.insufficientData ? `
+            <div style="background: #fff7ed; border: 1px solid #fdba74; color: #9a3412; padding: 10px 14px; border-radius: 6px; margin-bottom: 15px; font-size: 13px;">
+              ⚠️ <b>样本不足：</b>该统计周期内有效数据点 <b>${content.sampleSize}</b> 个（建议 ≥ 20），以下统计结果仅供参考。
+            </div>
+          ` : ''}
 
           <div style="background: #f8fafc; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
             <h3 style="font-size: 14px; font-weight: bold; color: #334155; margin: 0 0 10px 0;">📊 控制图参数</h3>

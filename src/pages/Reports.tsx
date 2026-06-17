@@ -200,7 +200,17 @@ export default function Reports() {
                     <td className="py-3 px-4">
                       <div className="flex items-center gap-2">
                         <FileText className="w-4 h-4 text-primary-400" />
-                        <span className="font-medium text-slate-200">{report.name}</span>
+                        <div className="flex flex-col">
+                          <span className="font-medium text-slate-200">{report.name}</span>
+                          {report.content && report.content.length > 0 && (
+                            <span className="text-[10px] text-slate-500 mt-0.5">
+                              共 {report.content.reduce((sum, c) => sum + c.sampleSize, 0)} 个样本点
+                              {report.content.some(c => c.insufficientData) && (
+                                <span className="ml-2 text-warning">⚠ 部分指标样本不足</span>
+                              )}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </td>
                     <td className="py-3 px-4">
