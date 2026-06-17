@@ -1,0 +1,128 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+}
+
+body {
+  background-color: #0F172A;
+  color: #E2E8F0;
+  overflow: hidden;
+}
+
+/* 滚动条样式 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #1E293B;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #475569;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #64748B;
+}
+
+/* 数字字体 */
+.font-mono {
+  font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+}
+
+/* 卡片通用样式 */
+@layer components {
+  .spc-card {
+    @apply bg-dark-card border border-dark-border rounded-lg p-4 shadow-lg;
+    background: linear-gradient(135deg, rgba(30, 41, 59, 0.9) 0%, rgba(15, 23, 42, 0.95) 100%);
+  }
+
+  .spc-card-header {
+    @apply flex items-center justify-between mb-3 pb-2 border-b border-dark-border;
+  }
+
+  .spc-card-title {
+    @apply text-sm font-medium text-slate-300;
+  }
+
+  .spc-btn {
+    @apply px-3 py-1.5 text-xs font-medium rounded transition-all duration-200 border;
+  }
+
+  .spc-btn-primary {
+    @apply bg-primary-600 hover:bg-primary-500 border-primary-500 text-white;
+  }
+
+  .spc-btn-secondary {
+    @apply bg-dark-card hover:bg-dark-border border-dark-border text-slate-300;
+  }
+
+  .spc-btn-danger {
+    @apply bg-danger/20 hover:bg-danger/30 border-danger/50 text-danger;
+  }
+
+  .spc-input {
+    @apply bg-dark-bg border border-dark-border rounded px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-primary-500 transition-colors;
+  }
+
+  .status-indicator {
+    @apply w-2 h-2 rounded-full;
+  }
+
+  .status-success {
+    @apply bg-success shadow-[0_0_8px_rgba(16,185,129,0.6)];
+  }
+
+  .status-warning {
+    @apply bg-warning shadow-[0_0_8px_rgba(245,158,11,0.6)];
+  }
+
+  .status-danger {
+    @apply bg-danger shadow-[0_0_8px_rgba(239,68,68,0.6)];
+    animation: blink 1s ease-in-out infinite;
+  }
+}
+
+/* 数据闪烁动画 */
+@keyframes dataUpdate {
+  0% { background-color: rgba(59, 130, 246, 0.3); }
+  100% { background-color: transparent; }
+}
+
+.data-update-flash {
+  animation: dataUpdate 0.5s ease-out;
+}
+
+/* 网格背景 */
+.grid-bg {
+  background-image: 
+    linear-gradient(rgba(51, 65, 85, 0.3) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(51, 65, 85, 0.3) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
