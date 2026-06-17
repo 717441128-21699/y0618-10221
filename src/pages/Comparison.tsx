@@ -54,7 +54,7 @@ export default function Comparison() {
       const values = [
         Math.min(item.cpk, 2),
         item.qualifiedRate,
-        Math.min(Math.abs(item.meanOffset) * 100, 10),
+        Math.min(Math.abs(item.meanOffset), 10),
         maxAlarm - item.alarmCount,
       ];
       return {
@@ -77,7 +77,7 @@ export default function Comparison() {
           return `<b>${params.name}</b><br/>
             Cpk: ${d.cpk.toFixed(2)}<br/>
             合格率: ${d.qualifiedRate.toFixed(2)}%<br/>
-            均值偏移: ${d.meanOffset >= 0 ? '+' : ''}${(d.meanOffset * 100).toFixed(2)}%<br/>
+            均值偏移: ${d.meanOffset >= 0 ? '+' : ''}${d.meanOffset.toFixed(2)}%<br/>
             报警数: ${d.alarmCount}次`;
         },
       },
@@ -439,9 +439,9 @@ export default function Comparison() {
               <div className="flex justify-between text-xs">
                 <span className="text-slate-500">均值偏移</span>
                 <span className={`font-mono font-medium ${
-                  Math.abs(item.meanOffset) <= 0.01 ? 'text-success' : Math.abs(item.meanOffset) <= 0.03 ? 'text-warning' : 'text-danger'
+                  Math.abs(item.meanOffset) <= 1 ? 'text-success' : Math.abs(item.meanOffset) <= 3 ? 'text-warning' : 'text-danger'
                 }`}>
-                  {item.meanOffset >= 0 ? '+' : ''}{(item.meanOffset * 100).toFixed(2)}%
+                  {item.meanOffset >= 0 ? '+' : ''}{item.meanOffset.toFixed(2)}%
                 </span>
               </div>
               <div className="pt-2 mt-2 border-t border-dark-border/50 flex justify-between text-xs">
@@ -504,7 +504,7 @@ export default function Comparison() {
                 <span className="w-1.5 h-1.5 rounded-full bg-warning mt-2 flex-shrink-0" />
                 <span>
                   <b className="text-slate-300">{getItemName(sortedByOffset[0])}</b> 均值最稳定，
-                  偏移量仅 <b className="font-mono text-success">{(sortedByOffset[0].meanOffset * 100).toFixed(2)}%</b>，
+                  偏移量仅 <b className="font-mono text-success">{sortedByOffset[0].meanOffset.toFixed(2)}%</b>，
                   居中程度最好
                 </span>
               </li>

@@ -1,5 +1,4 @@
 import { create } from 'zustand';
-import jsPDF from 'jspdf';
 import { QualityDataPoint, SubgroupData, ControlLimits, AlarmRecord, ProcessCapability, DefectCause, ShiftData, MachineData, SPCReport, BaselineVersion, AlarmFilter, ReportContentSnapshot } from '@/types';
 import { generateQualityData, generateSubgroups, METRICS_CONFIG } from '@/mock/data';
 import { calculateXbarRControlLimits, calculateIMRControlLimits, calculateProcessCapability } from '@/utils/spc';
@@ -536,7 +535,50 @@ export const useSPCStore = create<SPCState>((set, get) => ({
     const baseline = state.baselines.find(b => b.id === baselineId);
     if (!baseline) return;
 
-    set({ controlLimits: { ...baseline.controlLimits, isActive: true } });
+    const newControlLimits = { ...baseline.controlLimits, isActive: true };
+
+    const values = state.chartType === 'xbar-r'
+      ? state.subgroups.map(s => s.mean)
+      : state.qualityData.map(d => d.value);
+    const dataSources = state.chartType === 'xbar-r' ? state.subgroups : state.qualityData;
+
+    const alarms = checkNelsonRules(
+      values,
+      newControlLimits.cl,
+      newControlLimits.ucl,
+      newControlLimits.lcl,
+      state.nelsonRules,
+      baseline.metricName
+    ).map(a => ({
+      ...a,
+      metricId: state.currentMetric,
+      shiftId: dataSources[a.dataPointIndex]?.shiftId,
+      machineId: dataSources[a.dataPointIndex]?.machineId,
+    }));
+
+    const metric = state.metricsConfig.find(m => m.id === state.currentMetric);
+    const shiftData = calculateShiftData(
+      state.qualityData,
+      metric?.target || 50,
+      newControlLimits.usl,
+      newControlLimits.lsl,
+      newControlLimits
+    );
+    const machineData = calculateMachineData(
+      state.qualityData,
+      metric?.target || 50,
+      newControlLimits.usl,
+      newControlLimits.lsl,
+      newControlLimits
+    );
+
+    set({
+      controlLimits: newControlLimits,
+      alarms,
+      shiftData,
+      machineData,
+      highlightedDataPoint: null,
+    });
   },
 
   deleteBaseline: (baselineId) => {
@@ -573,56 +615,105 @@ export const useSPCStore = create<SPCState>((set, get) => ({
 
     const contents: ReportContentSnapshot[] = metricIds.map(metricId => {
       const metric = state.metricsConfig.find(m => m.id === metricId);
-      const cl = state.controlLimits;
-      const pc = state.processCapability;
-      
+      if (!metric) return null;
+
+      const metricData = generateQualityData(120, metric.target, (metric.usl - metric.lsl) / 8, periodStart);
+      const filteredData = metricData.filter(d => d.timestamp >= periodStart && d.timestamp <= periodEnd);
+      const dataToUse = filteredData.length > 10 ? filteredData : metricData;
+
+      const subgroups = generateSubgroups(dataToUse, state.subgroupSize);
+      const limitsCalc = state.chartType === 'xbar-r'
+        ? calculateXbarRControlLimits(subgroups, state.subgroupSize)
+        : calculateIMRControlLimits(dataToUse.map(d => d.value));
+
+      const controlLimits: ControlLimits = {
+        id: `cl-report-${Date.now()}-${metricId}`,
+        metricName: metric.name,
+        ...limitsCalc,
+        usl: metric.usl,
+        lsl: metric.lsl,
+        target: metric.target,
+        calculatedAt: Date.now(),
+        baselinePeriod: '报告统计区间',
+        isActive: false,
+      };
+
+      const values = state.chartType === 'xbar-r'
+        ? subgroups.map(s => s.mean)
+        : dataToUse.map(d => d.value);
+      const dataSources = state.chartType === 'xbar-r' ? subgroups : dataToUse;
+
+      const alarms = checkNelsonRules(
+        values,
+        controlLimits.cl,
+        controlLimits.ucl,
+        controlLimits.lcl,
+        state.nelsonRules,
+        metric.name
+      ).map(a => ({
+        ...a,
+        metricId,
+        shiftId: dataSources[a.dataPointIndex]?.shiftId,
+        machineId: dataSources[a.dataPointIndex]?.machineId,
+      }));
+
+      const capability = calculateProcessCapability(
+        dataToUse.map(d => d.value),
+        metric.usl,
+        metric.lsl
+      );
+
+      const paretoData = calculateDefectCausesFromData(
+        dataToUse,
+        metric.target,
+        metric.usl,
+        metric.lsl
+      ).slice(0, 8);
+
       const ruleCounts: Record<string, number> = {};
-      state.alarms.forEach(a => {
-        if (a.metricId === metricId) {
-          ruleCounts[a.ruleName] = (ruleCounts[a.ruleName] || 0) + 1;
-        }
+      alarms.forEach(a => {
+        ruleCounts[a.ruleName] = (ruleCounts[a.ruleName] || 0) + 1;
       });
       const topRules = Object.entries(ruleCounts)
         .sort(([, a], [, b]) => b - a)
         .slice(0, 5)
         .map(([ruleName, count]) => ({ ruleName, count }));
-      
-      const metricAlarms = state.alarms.filter(a => a.metricId === metricId);
-      
+
       return {
         metricId,
-        metricName: metric?.name || metricId,
+        metricName: metric.name,
+        sampleSize: dataToUse.length,
         controlChart: {
-          ucl: cl?.ucl || 0,
-          cl: cl?.cl || 0,
-          lcl: cl?.lcl || 0,
-          uclR: cl?.uclR,
-          clR: cl?.clR,
-          lclR: cl?.lclR,
-          usl: cl?.usl,
-          lsl: cl?.lsl,
+          ucl: controlLimits.ucl,
+          cl: controlLimits.cl,
+          lcl: controlLimits.lcl,
+          uclR: controlLimits.uclR,
+          clR: controlLimits.clR,
+          lclR: controlLimits.lclR,
+          usl: controlLimits.usl,
+          lsl: controlLimits.lsl,
         },
         processCapability: {
-          cp: pc?.cp || 0,
-          cpk: pc?.cpk || 0,
-          pp: pc?.pp || 0,
-          ppk: pc?.ppk || 0,
-          mean: pc?.mean || 0,
-          stdDev: pc?.stdDevOverall || 0,
+          cp: capability.cp,
+          cpk: capability.cpk,
+          pp: capability.pp,
+          ppk: capability.ppk,
+          mean: capability.mean,
+          stdDev: capability.stdDevOverall,
         },
         alarmSummary: {
-          totalCount: metricAlarms.length,
-          criticalCount: metricAlarms.filter(a => a.severity === 'critical').length,
-          warningCount: metricAlarms.filter(a => a.severity === 'warning').length,
+          totalCount: alarms.length,
+          criticalCount: alarms.filter(a => a.severity === 'critical').length,
+          warningCount: alarms.filter(a => a.severity === 'warning').length,
           topRules,
         },
-        paretoData: state.defectCauses.slice(0, 8).map(d => ({
+        paretoData: paretoData.map(d => ({
           name: d.name,
           count: d.count,
           percentage: d.percentage,
         })),
       };
-    });
+    }).filter(Boolean) as ReportContentSnapshot[];
 
     const completedReport: SPCReport = {
       ...generatingReport,
@@ -646,134 +737,159 @@ export const useSPCStore = create<SPCState>((set, get) => ({
       throw new Error('报告不可导出');
     }
 
-    const doc = new jsPDF();
-    let yOffset = 20;
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
+    const container = document.createElement('div');
+    container.style.cssText = `
+      position: fixed;
+      left: -9999px;
+      top: 0;
+      width: 794px;
+      background: #ffffff;
+      padding: 40px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      color: #1e293b;
+      line-height: 1.6;
+    `;
 
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(20);
-    doc.text('SPC 分析报告', pageWidth / 2, yOffset, { align: 'center' });
-    yOffset += 15;
+    const formatDate = (ts: number) => new Date(ts).toLocaleDateString('zh-CN');
+    const formatDateTime = (ts: number) => new Date(ts).toLocaleString('zh-CN');
 
-    doc.setFontSize(10);
-    doc.setFont('helvetica', 'normal');
-    doc.text(`报告名称: ${report.name}`, 20, yOffset);
-    yOffset += 7;
-    doc.text(`生成时间: ${new Date(report.createdAt).toLocaleString('zh-CN')}`, 20, yOffset);
-    yOffset += 7;
-    doc.text(`统计周期: ${new Date(report.periodStart).toLocaleDateString('zh-CN')} ~ ${new Date(report.periodEnd).toLocaleDateString('zh-CN')}`, 20, yOffset);
-    yOffset += 7;
-    doc.text(`分析指标: ${report.metricNames.join(', ')}`, 20, yOffset);
-    yOffset += 15;
-
-    doc.setDrawColor(0, 0, 0);
-    doc.line(20, yOffset, pageWidth - 20, yOffset);
-    yOffset += 10;
+    let html = `
+      <div style="text-align: center; margin-bottom: 30px; padding-bottom: 20px; border-bottom: 2px solid #3b82f6;">
+        <h1 style="font-size: 28px; font-weight: bold; color: #1e40af; margin: 0 0 10px 0;">SPC 分析报告</h1>
+        <p style="font-size: 14px; color: #64748b; margin: 4px 0;"><b>报告名称：</b>${report.name}</p>
+        <p style="font-size: 14px; color: #64748b; margin: 4px 0;"><b>生成时间：</b>${formatDateTime(report.createdAt)}</p>
+        <p style="font-size: 14px; color: #64748b; margin: 4px 0;"><b>统计周期：</b>${formatDate(report.periodStart)} ~ ${formatDate(report.periodEnd)}</p>
+        <p style="font-size: 14px; color: #64748b; margin: 4px 0;"><b>分析指标：</b>${report.metricNames.join('、')}</p>
+      </div>
+    `;
 
     report.content.forEach((content, idx) => {
-      if (yOffset > pageHeight - 60) {
-        doc.addPage();
-        yOffset = 20;
-      }
+      html += `
+        <div style="margin-bottom: 35px; page-break-inside: avoid;">
+          <h2 style="font-size: 18px; font-weight: bold; color: #1e40af; margin: 0 0 15px 0; padding-left: 10px; border-left: 4px solid #3b82f6;">
+            ${idx + 1}. ${content.metricName}
+          </h2>
 
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(14);
-      doc.text(`${idx + 1}. ${content.metricName}`, 20, yOffset);
-      yOffset += 10;
+          <div style="background: #f8fafc; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+            <h3 style="font-size: 14px; font-weight: bold; color: #334155; margin: 0 0 10px 0;">📊 控制图参数</h3>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 13px; font-family: 'JetBrains Mono', Consolas, monospace;">
+              <div><b>UCL：</b>${content.controlChart.ucl.toFixed(4)}</div>
+              <div><b>CL：</b>${content.controlChart.cl.toFixed(4)}</div>
+              <div><b>LCL：</b>${content.controlChart.lcl.toFixed(4)}</div>
+              ${content.controlChart.usl !== undefined ? `<div><b>USL：</b>${content.controlChart.usl.toFixed(4)}</div>` : ''}
+              ${content.controlChart.lsl !== undefined ? `<div><b>LSL：</b>${content.controlChart.lsl.toFixed(4)}</div>` : ''}
+              ${content.controlChart.clR !== undefined ? `<div><b>CL-R：</b>${content.controlChart.clR.toFixed(4)}</div>` : ''}
+            </div>
+          </div>
 
-      doc.setFontSize(11);
-      doc.setFont('helvetica', 'bold');
-      doc.text('控制图参数:', 25, yOffset);
-      yOffset += 7;
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(10);
-      doc.text(`  UCL: ${content.controlChart.ucl.toFixed(4)}    CL: ${content.controlChart.cl.toFixed(4)}    LCL: ${content.controlChart.lcl.toFixed(4)}`, 30, yOffset);
-      yOffset += 6;
-      if (content.controlChart.usl !== undefined && content.controlChart.lsl !== undefined) {
-        doc.text(`  USL: ${content.controlChart.usl.toFixed(4)}    LSL: ${content.controlChart.lsl.toFixed(4)}`, 30, yOffset);
-        yOffset += 6;
-      }
-      yOffset += 4;
+          <div style="background: #f0fdf4; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+            <h3 style="font-size: 14px; font-weight: bold; color: #166534; margin: 0 0 10px 0;">📈 过程能力指数</h3>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 13px; font-family: 'JetBrains Mono', Consolas, monospace;">
+              <div><b>Cp：</b>${content.processCapability.cp.toFixed(3)}</div>
+              <div><b>Cpk：</b>${content.processCapability.cpk.toFixed(3)}</div>
+              <div><b>Pp：</b>${content.processCapability.pp.toFixed(3)}</div>
+              <div><b>Ppk：</b>${content.processCapability.ppk.toFixed(3)}</div>
+              <div><b>均值：</b>${content.processCapability.mean.toFixed(4)}</div>
+              <div><b>标准差：</b>${content.processCapability.stdDev.toFixed(4)}</div>
+            </div>
+            <div style="margin-top: 10px; padding: 8px 12px; border-radius: 4px; font-size: 13px;
+              background: ${content.processCapability.cpk >= 1.33 ? '#dcfce7' : content.processCapability.cpk >= 1.0 ? '#fef3c7' : '#fee2e2'};
+              color: ${content.processCapability.cpk >= 1.33 ? '#166534' : content.processCapability.cpk >= 1.0 ? '#92400e' : '#991b1b'};">
+              <b>过程能力等级：</b>${content.processCapability.cpk >= 1.33 ? '✅ 良好' : content.processCapability.cpk >= 1.0 ? '⚠️ 一般' : '❌ 不足'}
+              ${content.processCapability.cpk < 1.33 ? '（低于 1.33 阈值，需关注）' : ''}
+            </div>
+          </div>
 
-      if (yOffset > pageHeight - 80) {
-        doc.addPage();
-        yOffset = 20;
-      }
+          <div style="background: #fef2f2; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+            <h3 style="font-size: 14px; font-weight: bold; color: #991b1b; margin: 0 0 10px 0;">
+              ⚠️ 报警摘要（总计 ${content.alarmSummary.totalCount} 条）
+            </h3>
+            <div style="display: flex; gap: 20px; font-size: 13px; margin-bottom: 10px;">
+              <span><b style="color: #dc2626;">🔴 严重：</b>${content.alarmSummary.criticalCount} 条</span>
+              <span><b style="color: #d97706;">🟡 警告：</b>${content.alarmSummary.warningCount} 条</span>
+            </div>
+            ${content.alarmSummary.topRules.length > 0 ? `
+              <div style="font-size: 13px;">
+                <b>TOP 违规规则：</b>
+                <ul style="margin: 6px 0 0 0; padding-left: 20px;">
+                  ${content.alarmSummary.topRules.map(r => `<li>${r.ruleName}：${r.count} 次</li>`).join('')}
+                </ul>
+              </div>
+            ` : ''}
+          </div>
 
-      doc.setFontSize(11);
-      doc.setFont('helvetica', 'bold');
-      doc.text('过程能力指数:', 25, yOffset);
-      yOffset += 7;
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(10);
-      doc.text(`  Cp=${content.processCapability.cp.toFixed(3)}  Cpk=${content.processCapability.cpk.toFixed(3)}  Pp=${content.processCapability.pp.toFixed(3)}  Ppk=${content.processCapability.ppk.toFixed(3)}`, 30, yOffset);
-      yOffset += 6;
-      doc.text(`  均值=${content.processCapability.mean.toFixed(4)}  标准差=${content.processCapability.stdDev.toFixed(4)}`, 30, yOffset);
-      yOffset += 4;
-
-      const cpkColor = content.processCapability.cpk >= 1.33 ? '良好' : content.processCapability.cpk >= 1.0 ? '一般' : '不足';
-      doc.text(`  过程能力等级: ${cpkColor}`, 30, yOffset);
-      yOffset += 8;
-
-      if (yOffset > pageHeight - 80) {
-        doc.addPage();
-        yOffset = 20;
-      }
-
-      doc.setFontSize(11);
-      doc.setFont('helvetica', 'bold');
-      doc.text(`报警摘要 (总计 ${content.alarmSummary.totalCount} 条):`, 25, yOffset);
-      yOffset += 7;
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(10);
-      doc.text(`  严重: ${content.alarmSummary.criticalCount} 条    警告: ${content.alarmSummary.warningCount} 条`, 30, yOffset);
-      yOffset += 6;
-      if (content.alarmSummary.topRules.length > 0) {
-        doc.text('  TOP违规规则:', 30, yOffset);
-        yOffset += 5;
-        content.alarmSummary.topRules.forEach(rule => {
-          doc.text(`    - ${rule.ruleName}: ${rule.count} 次`, 35, yOffset);
-          yOffset += 5;
-        });
-      }
-      yOffset += 4;
-
-      if (yOffset > pageHeight - 100) {
-        doc.addPage();
-        yOffset = 20;
-      }
-
-      doc.setFontSize(11);
-      doc.setFont('helvetica', 'bold');
-      doc.text('帕累托分析 (不合格原因TOP):', 25, yOffset);
-      yOffset += 7;
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(10);
-      content.paretoData.forEach((item, pIdx) => {
-        if (yOffset > pageHeight - 25) {
-          doc.addPage();
-          yOffset = 20;
-        }
-        doc.text(`  ${pIdx + 1}. ${item.name}: ${item.count}件 (${item.percentage}%)`, 30, yOffset);
-        yOffset += 5;
-      });
-      yOffset += 10;
+          <div style="background: #eff6ff; padding: 15px; border-radius: 8px;">
+            <h3 style="font-size: 14px; font-weight: bold; color: #1e40af; margin: 0 0 10px 0;">📉 帕累托分析（不合格原因 TOP）</h3>
+            <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+              <thead>
+                <tr style="background: #dbeafe;">
+                  <th style="padding: 6px 10px; text-align: left; border: 1px solid #93c5fd;">排名</th>
+                  <th style="padding: 6px 10px; text-align: left; border: 1px solid #93c5fd;">不合格原因</th>
+                  <th style="padding: 6px 10px; text-align: right; border: 1px solid #93c5fd;">数量</th>
+                  <th style="padding: 6px 10px; text-align: right; border: 1px solid #93c5fd;">占比</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${content.paretoData.map((p, i) => `
+                  <tr style="${i < 3 ? 'background: #fef3c7;' : ''}">
+                    <td style="padding: 6px 10px; border: 1px solid #dbeafe; font-family: 'JetBrains Mono', Consolas, monospace;">${i + 1}</td>
+                    <td style="padding: 6px 10px; border: 1px solid #dbeafe;">${p.name}</td>
+                    <td style="padding: 6px 10px; text-align: right; border: 1px solid #dbeafe; font-family: 'JetBrains Mono', Consolas, monospace;">${p.count} 件</td>
+                    <td style="padding: 6px 10px; text-align: right; border: 1px solid #dbeafe; font-family: 'JetBrains Mono', Consolas, monospace;">${p.percentage}%</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
     });
 
-    if (yOffset > pageHeight - 40) {
-      doc.addPage();
-      yOffset = pageHeight - 25;
-    } else {
-      yOffset = pageHeight - 25;
+    html += `
+      <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #cbd5e1; text-align: center; font-size: 12px; color: #94a3b8;">
+        SPC 统计过程控制系统 · 分析报告自动生成 · ${formatDateTime(Date.now())}
+      </div>
+    `;
+
+    container.innerHTML = html;
+    document.body.appendChild(container);
+
+    try {
+      const html2canvas = (await import('html2canvas')).default;
+      const canvas = await html2canvas(container, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: '#ffffff',
+        logging: false,
+      });
+
+      const imgData = canvas.toDataURL('image/png');
+      const { jsPDF } = await import('jspdf');
+      const doc = new jsPDF('p', 'mm', 'a4');
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+
+      const imgWidth = pageWidth - 20;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+      let heightLeft = imgHeight;
+      let position = 10;
+
+      doc.addImage(imgData, 'PNG', 10, position, imgWidth, imgHeight);
+      heightLeft -= (pageHeight - 20);
+
+      while (heightLeft >= 0) {
+        position = heightLeft - imgHeight + 10;
+        doc.addPage();
+        doc.addImage(imgData, 'PNG', 10, position, imgWidth, imgHeight);
+        heightLeft -= (pageHeight - 20);
+      }
+
+      const fileName = `SPC报告_${report.name}_${new Date(report.createdAt).toISOString().slice(0, 10)}.pdf`;
+      doc.save(fileName);
+    } finally {
+      document.body.removeChild(container);
     }
-
-    doc.setFontSize(8);
-    doc.setTextColor(150, 150, 150);
-    doc.text('SPC 统计过程控制系统 - 分析报告自动生成', pageWidth / 2, yOffset, { align: 'center' });
-
-    const fileName = `SPC报告_${report.name}_${new Date(report.createdAt).toISOString().slice(0, 10)}.pdf`;
-    doc.save(fileName);
   },
 
   deleteReport: (reportId) => {

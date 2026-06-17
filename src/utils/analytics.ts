@@ -1,4 +1,4 @@
-import { QualityDataPoint, ShiftData, MachineData, DefectCause } from '@/types';
+import { QualityDataPoint, ShiftData, MachineData, DefectCause, ControlLimits } from '@/types';
 import { calculateMean, calculateStdDev } from './statistics';
 import { calculateProcessCapability } from './spc';
 
@@ -6,7 +6,8 @@ export function calculateShiftData(
   data: QualityDataPoint[],
   target: number = 50,
   usl?: number,
-  lsl?: number
+  lsl?: number,
+  controlLimits?: ControlLimits
 ): ShiftData[] {
   const shifts = ['早班', '中班', '晚班'];
   
@@ -45,13 +46,20 @@ export function calculateShiftData(
     }
     
     const qualifiedRate = (qualifiedCount / values.length) * 100;
-    const meanOffset = Math.abs(mean - target) / (target || 1) * 100;
+    const meanOffset = ((mean - target) / (target || 1)) * 100;
     
-    const sigma = (usl && lsl) ? (usl - lsl) / 6 : stdDev || 1;
-    const exceedingCount = values.filter(v => 
-      (usl !== undefined && v > usl) || (lsl !== undefined && v < lsl) ||
-      v > mean + 3 * sigma || v < mean - 3 * sigma
-    ).length;
+    let exceedingCount: number;
+    if (controlLimits) {
+      exceedingCount = values.filter(v => 
+        v > controlLimits.ucl || v < controlLimits.lcl
+      ).length;
+    } else {
+      const sigma = (usl && lsl) ? (usl - lsl) / 6 : stdDev || 1;
+      exceedingCount = values.filter(v => 
+        (usl !== undefined && v > usl) || (lsl !== undefined && v < lsl) ||
+        v > mean + 3 * sigma || v < mean - 3 * sigma
+      ).length;
+    }
 
     return {
       shiftId,
@@ -71,7 +79,8 @@ export function calculateMachineData(
   data: QualityDataPoint[],
   target: number = 50,
   usl?: number,
-  lsl?: number
+  lsl?: number,
+  controlLimits?: ControlLimits
 ): MachineData[] {
   const machines = ['CNC-001', 'CNC-002', 'CNC-003', 'CNC-004'];
   
@@ -110,13 +119,20 @@ export function calculateMachineData(
     }
     
     const qualifiedRate = (qualifiedCount / values.length) * 100;
-    const meanOffset = Math.abs(mean - target) / (target || 1) * 100;
+    const meanOffset = ((mean - target) / (target || 1)) * 100;
     
-    const sigma = (usl && lsl) ? (usl - lsl) / 6 : stdDev || 1;
-    const exceedingCount = values.filter(v => 
-      (usl !== undefined && v > usl) || (lsl !== undefined && v < lsl) ||
-      v > mean + 3 * sigma || v < mean - 3 * sigma
-    ).length;
+    let exceedingCount: number;
+    if (controlLimits) {
+      exceedingCount = values.filter(v => 
+        v > controlLimits.ucl || v < controlLimits.lcl
+      ).length;
+    } else {
+      const sigma = (usl && lsl) ? (usl - lsl) / 6 : stdDev || 1;
+      exceedingCount = values.filter(v => 
+        (usl !== undefined && v > usl) || (lsl !== undefined && v < lsl) ||
+        v > mean + 3 * sigma || v < mean - 3 * sigma
+      ).length;
+    }
 
     return {
       machineId,
