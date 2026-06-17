@@ -116,7 +116,7 @@ interface SPCState {
   restoreBaseline: (baselineId: string) => void;
   deleteBaseline: (baselineId: string) => void;
 
-  generateReport: (params: { name: string; periodStart: number; periodEnd: number; metricIds: string[] }) => Promise<SPCReport>;
+  generateReport: (params: { name: string; periodStart: number; periodEnd: number; metricIds: string[]; isComparison?: boolean; comparePeriodStart?: number; comparePeriodEnd?: number }) => Promise<SPCReport>;
   downloadReportPDF: (reportId: string) => Promise<void>;
   deleteReport: (reportId: string) => void;
 
@@ -588,12 +588,149 @@ export const useSPCStore = create<SPCState>((set, get) => ({
     saveToStorage(STORAGE_KEY_BASELINES, baselines);
   },
 
-  generateReport: async ({ name, periodStart, periodEnd, metricIds }) => {
+  generateReport: async ({ name, periodStart, periodEnd, metricIds, isComparison = false, comparePeriodStart, comparePeriodEnd }) => {
     const state = get();
     const reportId = `report-${Date.now()}`;
     const metricNames = metricIds.map(id => 
       state.metricsConfig.find(m => m.id === id)?.name || id
     );
+
+    const MIN_SAMPLE_THRESHOLD = 20;
+    const calculateContentForPeriod = (ps: number, pe: number): ReportContentSnapshot[] => {
+      const s = get();
+      const periodMs = pe - ps;
+      const pointsPerDay = 24 * 60 / 5;
+      const estimatedCount = Math.max(30, Math.min(300, Math.floor(periodMs / 86400000 * pointsPerDay)));
+      return metricIds.map(metricId => {
+        const metric = s.metricsConfig.find(m => m.id === metricId);
+        if (!metric) return null;
+
+        const metricData = generateQualityData(estimatedCount, metric.target, (metric.usl - metric.lsl) / 8, pe);
+        const filteredData = metricData.filter(d => d.timestamp >= ps && d.timestamp <= pe);
+        const insufficientData = filteredData.length < MIN_SAMPLE_THRESHOLD;
+        const dataToUse = filteredData;
+
+        if (dataToUse.length === 0) {
+          return {
+            metricId,
+            metricName: metric.name,
+            sampleSize: 0,
+            insufficientData: true,
+            controlChart: {
+              ucl: metric.usl,
+              cl: metric.target,
+              lcl: metric.lsl,
+              usl: metric.usl,
+              lsl: metric.lsl,
+            },
+            processCapability: {
+              cp: 0, cpk: 0, pp: 0, ppk: 0,
+              mean: metric.target,
+              stdDev: 0,
+            },
+            alarmSummary: {
+              totalCount: 0, criticalCount: 0, warningCount: 0,
+              topRules: [],
+            },
+            paretoData: [],
+          };
+        }
+
+        const subgroups = generateSubgroups(dataToUse, s.subgroupSize);
+        const limitsCalc = s.chartType === 'xbar-r'
+          ? calculateXbarRControlLimits(subgroups, s.subgroupSize)
+          : calculateIMRControlLimits(dataToUse.map(d => d.value));
+
+        const controlLimits: ControlLimits = {
+          id: `cl-report-${Date.now()}-${metricId}`,
+          metricName: metric.name,
+          ...limitsCalc,
+          usl: metric.usl,
+          lsl: metric.lsl,
+          target: metric.target,
+          calculatedAt: Date.now(),
+          baselinePeriod: '报告统计区间',
+          isActive: false,
+        };
+
+        const values = s.chartType === 'xbar-r'
+          ? subgroups.map(sg => sg.mean)
+          : dataToUse.map(d => d.value);
+        const dataSources = s.chartType === 'xbar-r' ? subgroups : dataToUse;
+
+        const alarms = checkNelsonRules(
+          values,
+          controlLimits.cl,
+          controlLimits.ucl,
+          controlLimits.lcl,
+          s.nelsonRules,
+          metric.name
+        ).map(a => ({
+          ...a,
+          metricId,
+          shiftId: dataSources[a.dataPointIndex]?.shiftId,
+          machineId: dataSources[a.dataPointIndex]?.machineId,
+        }));
+
+        const capability = calculateProcessCapability(
+          dataToUse.map(d => d.value),
+          metric.usl,
+          metric.lsl
+        );
+
+        const paretoData = calculateDefectCausesFromData(
+          dataToUse,
+          metric.target,
+          metric.usl,
+          metric.lsl
+        ).slice(0, 8);
+
+        const ruleCounts: Record<string, number> = {};
+        alarms.forEach(a => {
+          ruleCounts[a.ruleName] = (ruleCounts[a.ruleName] || 0) + 1;
+        });
+        const topRules = Object.entries(ruleCounts)
+          .sort(([, a], [, b]) => b - a)
+          .slice(0, 5)
+          .map(([ruleName, count]) => ({ ruleName, count }));
+
+        return {
+          metricId,
+          metricName: metric.name,
+          sampleSize: dataToUse.length,
+          insufficientData,
+          controlChart: {
+            ucl: controlLimits.ucl,
+            cl: controlLimits.cl,
+            lcl: controlLimits.lcl,
+            uclR: controlLimits.uclR,
+            clR: controlLimits.clR,
+            lclR: controlLimits.lclR,
+            usl: controlLimits.usl,
+            lsl: controlLimits.lsl,
+          },
+          processCapability: {
+            cp: capability.cp,
+            cpk: capability.cpk,
+            pp: capability.pp,
+            ppk: capability.ppk,
+            mean: capability.mean,
+            stdDev: capability.stdDevOverall,
+          },
+          alarmSummary: {
+            totalCount: alarms.length,
+            criticalCount: alarms.filter(a => a.severity === 'critical').length,
+            warningCount: alarms.filter(a => a.severity === 'warning').length,
+            topRules,
+          },
+          paretoData: paretoData.map(d => ({
+            name: d.name,
+            count: d.count,
+            percentage: d.percentage,
+          })),
+        };
+      }).filter(Boolean) as ReportContentSnapshot[];
+    };
 
     const generatingReport: SPCReport = {
       id: reportId,
@@ -605,6 +742,9 @@ export const useSPCStore = create<SPCState>((set, get) => ({
       metricNames,
       status: 'generating',
       generatedBy: '当前用户',
+      isComparison,
+      comparePeriodStart,
+      comparePeriodEnd,
     };
 
     const initialReports = [...state.reports, generatingReport];
@@ -613,147 +753,17 @@ export const useSPCStore = create<SPCState>((set, get) => ({
 
     await new Promise(resolve => setTimeout(resolve, 800));
 
-    const periodMs = periodEnd - periodStart;
-    const pointsPerDay = 24 * 60 / 5;
-    const estimatedCount = Math.max(30, Math.min(300, Math.floor(periodMs / 86400000 * pointsPerDay)));
-
-    const MIN_SAMPLE_THRESHOLD = 20;
-
-    const contents: ReportContentSnapshot[] = metricIds.map(metricId => {
-      const metric = state.metricsConfig.find(m => m.id === metricId);
-      if (!metric) return null;
-
-      const metricData = generateQualityData(estimatedCount, metric.target, (metric.usl - metric.lsl) / 8, periodEnd);
-      const filteredData = metricData.filter(d => d.timestamp >= periodStart && d.timestamp <= periodEnd);
-
-      const insufficientData = filteredData.length < MIN_SAMPLE_THRESHOLD;
-      const dataToUse = filteredData;
-
-      if (dataToUse.length === 0) {
-        return {
-          metricId,
-          metricName: metric.name,
-          sampleSize: 0,
-          insufficientData: true,
-          controlChart: {
-            ucl: metric.usl,
-            cl: metric.target,
-            lcl: metric.lsl,
-            usl: metric.usl,
-            lsl: metric.lsl,
-          },
-          processCapability: {
-            cp: 0, cpk: 0, pp: 0, ppk: 0,
-            mean: metric.target,
-            stdDev: 0,
-          },
-          alarmSummary: {
-            totalCount: 0, criticalCount: 0, warningCount: 0,
-            topRules: [],
-          },
-          paretoData: [],
-        };
-      }
-
-      const subgroups = generateSubgroups(dataToUse, state.subgroupSize);
-      const limitsCalc = state.chartType === 'xbar-r'
-        ? calculateXbarRControlLimits(subgroups, state.subgroupSize)
-        : calculateIMRControlLimits(dataToUse.map(d => d.value));
-
-      const controlLimits: ControlLimits = {
-        id: `cl-report-${Date.now()}-${metricId}`,
-        metricName: metric.name,
-        ...limitsCalc,
-        usl: metric.usl,
-        lsl: metric.lsl,
-        target: metric.target,
-        calculatedAt: Date.now(),
-        baselinePeriod: '报告统计区间',
-        isActive: false,
-      };
-
-      const values = state.chartType === 'xbar-r'
-        ? subgroups.map(s => s.mean)
-        : dataToUse.map(d => d.value);
-      const dataSources = state.chartType === 'xbar-r' ? subgroups : dataToUse;
-
-      const alarms = checkNelsonRules(
-        values,
-        controlLimits.cl,
-        controlLimits.ucl,
-        controlLimits.lcl,
-        state.nelsonRules,
-        metric.name
-      ).map(a => ({
-        ...a,
-        metricId,
-        shiftId: dataSources[a.dataPointIndex]?.shiftId,
-        machineId: dataSources[a.dataPointIndex]?.machineId,
-      }));
-
-      const capability = calculateProcessCapability(
-        dataToUse.map(d => d.value),
-        metric.usl,
-        metric.lsl
-      );
-
-      const paretoData = calculateDefectCausesFromData(
-        dataToUse,
-        metric.target,
-        metric.usl,
-        metric.lsl
-      ).slice(0, 8);
-
-      const ruleCounts: Record<string, number> = {};
-      alarms.forEach(a => {
-        ruleCounts[a.ruleName] = (ruleCounts[a.ruleName] || 0) + 1;
-      });
-      const topRules = Object.entries(ruleCounts)
-        .sort(([, a], [, b]) => b - a)
-        .slice(0, 5)
-        .map(([ruleName, count]) => ({ ruleName, count }));
-
-      return {
-        metricId,
-        metricName: metric.name,
-        sampleSize: dataToUse.length,
-        insufficientData,
-        controlChart: {
-          ucl: controlLimits.ucl,
-          cl: controlLimits.cl,
-          lcl: controlLimits.lcl,
-          uclR: controlLimits.uclR,
-          clR: controlLimits.clR,
-          lclR: controlLimits.lclR,
-          usl: controlLimits.usl,
-          lsl: controlLimits.lsl,
-        },
-        processCapability: {
-          cp: capability.cp,
-          cpk: capability.cpk,
-          pp: capability.pp,
-          ppk: capability.ppk,
-          mean: capability.mean,
-          stdDev: capability.stdDevOverall,
-        },
-        alarmSummary: {
-          totalCount: alarms.length,
-          criticalCount: alarms.filter(a => a.severity === 'critical').length,
-          warningCount: alarms.filter(a => a.severity === 'warning').length,
-          topRules,
-        },
-        paretoData: paretoData.map(d => ({
-          name: d.name,
-          count: d.count,
-          percentage: d.percentage,
-        })),
-      };
-    }).filter(Boolean) as ReportContentSnapshot[];
+    const content = calculateContentForPeriod(periodStart, periodEnd);
+    let compareContent: ReportContentSnapshot[] | undefined;
+    if (isComparison && comparePeriodStart !== undefined && comparePeriodEnd !== undefined) {
+      compareContent = calculateContentForPeriod(comparePeriodStart, comparePeriodEnd);
+    }
 
     const completedReport: SPCReport = {
       ...generatingReport,
       status: 'completed',
-      content: contents,
+      content,
+      compareContent,
     };
 
     const s = get();

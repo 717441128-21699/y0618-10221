@@ -6,6 +6,7 @@ import Capability from "@/pages/Capability";
 import Pareto from "@/pages/Pareto";
 import Comparison from "@/pages/Comparison";
 import Reports from "@/pages/Reports";
+import ReportPreview from "@/pages/ReportPreview";
 import Settings from "@/pages/Settings";
 
 export default function App() {
@@ -20,6 +21,7 @@ export default function App() {
           <Route path="pareto" element={<Pareto />} />
           <Route path="comparison" element={<Comparison />} />
           <Route path="reports" element={<Reports />} />
+          <Route path="reports/:reportId" element={<ReportPreview />} />
           <Route path="settings" element={<Settings />} />
         </Route>
       </Routes>

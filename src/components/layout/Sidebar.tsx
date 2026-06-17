@@ -1,4 +1,4 @@
-import { NavLink } from 'react-router-dom';
+import { NavLink, useLocation } from 'react-router-dom';
 import { Activity, BarChart3, Gauge, TrendingDown, GitCompare, FileText, Settings } from 'lucide-react';
 
 const menuItems = [
@@ -12,6 +12,7 @@ const menuItems = [
 ];
 
 export default function Sidebar() {
+  const location = useLocation();
   return (
     <aside className="w-56 bg-dark-card border-r border-dark-border flex flex-col h-full">
       <div className="p-4 border-b border-dark-border">
@@ -28,23 +29,27 @@ export default function Sidebar() {
 
       <nav className="flex-1 py-4 px-2">
         <ul className="space-y-1">
-          {menuItems.map((item) => (
-            <li key={item.path}>
-              <NavLink
-                to={item.path}
-                className={({ isActive }) =>
-                  `flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-all duration-200 ${
-                    isActive
-                      ? 'bg-primary-600/20 text-primary-300 border-l-2 border-primary-500'
-                      : 'text-slate-400 hover:bg-dark-border hover:text-slate-200'
-                  }`
-                }
-              >
-                <item.icon className="w-4 h-4" />
-                <span>{item.label}</span>
-              </NavLink>
-            </li>
-          ))}
+          {menuItems.map((item) => {
+            const isReportsActive = item.path === '/reports' && location.pathname.startsWith('/reports');
+            return (
+              <li key={item.path}>
+                <NavLink
+                  to={item.path}
+                  className={({ isActive }) => {
+                    const shouldHighlight = isActive || isReportsActive;
+                    return `flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-all duration-200 ${
+                      shouldHighlight
+                        ? 'bg-primary-600/20 text-primary-300 border-l-2 border-primary-500'
+                        : 'text-slate-400 hover:bg-dark-border hover:text-slate-200'
+                    }`;
+                  }}
+                >
+                  <item.icon className="w-4 h-4" />
+                  <span>{item.label}</span>
+                </NavLink>
+              </li>
+            );
+          })}
         </ul>
       </nav>
 

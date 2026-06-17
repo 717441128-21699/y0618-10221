@@ -173,6 +173,10 @@ export interface SPCReport {
   status: 'generating' | 'completed' | 'failed';
   content?: ReportContentSnapshot[];
   generatedBy?: string;
+  isComparison?: boolean;
+  comparePeriodStart?: number;
+  comparePeriodEnd?: number;
+  compareContent?: ReportContentSnapshot[];
 }
 
 export type ChartType = 'xbar-r' | 'i-mr';
