@@ -37,6 +37,17 @@ export interface ControlLimits {
   isActive: boolean;
 }
 
+export interface BaselineVersion {
+  id: string;
+  metricId: string;
+  metricName: string;
+  name: string;
+  controlLimits: ControlLimits;
+  sampleSize: number;
+  createdAt: number;
+  note?: string;
+}
+
 export interface NelsonRule {
   id: number;
   name: string;
@@ -50,14 +61,26 @@ export interface AlarmRecord {
   id: string;
   timestamp: number;
   metricName: string;
+  metricId: string;
   ruleId: number;
   ruleName: string;
   severity: 'warning' | 'critical';
   dataPointIndex: number;
   value: number;
+  shiftId?: string;
+  machineId?: string;
   acknowledged: boolean;
   acknowledgedBy?: string;
   acknowledgedAt?: number;
+}
+
+export interface AlarmFilter {
+  ruleId?: number;
+  metricId?: string;
+  shiftId?: string;
+  machineId?: string;
+  severity?: 'warning' | 'critical';
+  acknowledged?: boolean;
 }
 
 export interface ProcessCapability {
@@ -89,7 +112,9 @@ export interface ShiftData {
   mean: number;
   stdDev: number;
   cpk: number;
-  defectRate: number;
+  qualifiedRate: number;
+  alarmCount: number;
+  meanOffset: number;
   sampleCount: number;
 }
 
@@ -99,8 +124,40 @@ export interface MachineData {
   mean: number;
   stdDev: number;
   cpk: number;
+  qualifiedRate: number;
   alarmCount: number;
+  meanOffset: number;
   sampleCount: number;
+}
+
+export interface ReportContentSnapshot {
+  metricId: string;
+  metricName: string;
+  controlChart: {
+    ucl: number;
+    cl: number;
+    lcl: number;
+    uclR?: number;
+    clR?: number;
+    lclR?: number;
+    usl?: number;
+    lsl?: number;
+  };
+  processCapability: {
+    cp: number;
+    cpk: number;
+    pp: number;
+    ppk: number;
+    mean: number;
+    stdDev: number;
+  };
+  alarmSummary: {
+    totalCount: number;
+    criticalCount: number;
+    warningCount: number;
+    topRules: { ruleName: string; count: number }[];
+  };
+  paretoData: { name: string; count: number; percentage: number }[];
 }
 
 export interface SPCReport {
@@ -110,7 +167,10 @@ export interface SPCReport {
   periodStart: number;
   periodEnd: number;
   metrics: string[];
+  metricNames: string[];
   status: 'generating' | 'completed' | 'failed';
+  content?: ReportContentSnapshot[];
+  generatedBy?: string;
 }
 
 export type ChartType = 'xbar-r' | 'i-mr';

@@ -107,27 +107,27 @@ export function generateDefectCauses(): DefectCause[] {
 
 export function generateShiftData(): ShiftData[] {
   return [
-    { shiftId: 'morning', shiftName: '早班', mean: 50.12, stdDev: 1.85, cpk: 1.42, defectRate: 0.85, sampleCount: 240 },
-    { shiftId: 'afternoon', shiftName: '中班', mean: 49.87, stdDev: 2.12, cpk: 1.28, defectRate: 1.24, sampleCount: 240 },
-    { shiftId: 'night', shiftName: '晚班', mean: 50.35, stdDev: 2.45, cpk: 1.15, defectRate: 1.67, sampleCount: 240 },
+    { shiftId: 'morning', shiftName: '早班', mean: 50.12, stdDev: 1.85, cpk: 1.42, qualifiedRate: 99.15, alarmCount: 2, meanOffset: 0.0024, sampleCount: 240 },
+    { shiftId: 'afternoon', shiftName: '中班', mean: 49.87, stdDev: 2.12, cpk: 1.28, qualifiedRate: 98.76, alarmCount: 5, meanOffset: -0.0026, sampleCount: 240 },
+    { shiftId: 'night', shiftName: '晚班', mean: 50.35, stdDev: 2.45, cpk: 1.15, qualifiedRate: 98.33, alarmCount: 8, meanOffset: 0.0070, sampleCount: 240 },
   ];
 }
 
 export function generateMachineData(): MachineData[] {
   return [
-    { machineId: 'cnc-001', machineName: 'CNC-001', mean: 49.95, stdDev: 1.78, cpk: 1.52, alarmCount: 3, sampleCount: 180 },
-    { machineId: 'cnc-002', machineName: 'CNC-002', mean: 50.23, stdDev: 2.05, cpk: 1.35, alarmCount: 5, sampleCount: 180 },
-    { machineId: 'cnc-003', machineName: 'CNC-003', mean: 49.68, stdDev: 2.34, cpk: 1.18, alarmCount: 8, sampleCount: 180 },
-    { machineId: 'cnc-004', machineName: 'CNC-004', mean: 50.45, stdDev: 1.92, cpk: 1.41, alarmCount: 4, sampleCount: 180 },
+    { machineId: 'cnc-001', machineName: 'CNC-001', mean: 49.95, stdDev: 1.78, cpk: 1.52, qualifiedRate: 99.44, alarmCount: 3, meanOffset: -0.0010, sampleCount: 180 },
+    { machineId: 'cnc-002', machineName: 'CNC-002', mean: 50.23, stdDev: 2.05, cpk: 1.35, qualifiedRate: 99.10, alarmCount: 5, meanOffset: 0.0046, sampleCount: 180 },
+    { machineId: 'cnc-003', machineName: 'CNC-003', mean: 49.68, stdDev: 2.34, cpk: 1.18, qualifiedRate: 98.20, alarmCount: 8, meanOffset: -0.0064, sampleCount: 180 },
+    { machineId: 'cnc-004', machineName: 'CNC-004', mean: 50.45, stdDev: 1.92, cpk: 1.41, qualifiedRate: 98.95, alarmCount: 4, meanOffset: 0.0090, sampleCount: 180 },
   ];
 }
 
 export function generateReports(): SPCReport[] {
   const now = Date.now();
   return [
-    { id: 'report-001', name: '2024年6月SPC月度分析报告', createdAt: now - 86400000 * 2, periodStart: now - 86400000 * 32, periodEnd: now - 86400000 * 2, metrics: ['外径尺寸', '内径尺寸', '表面粗糙度'], status: 'completed' },
-    { id: 'report-002', name: '第一周质量分析报告', createdAt: now - 86400000 * 5, periodStart: now - 86400000 * 12, periodEnd: now - 86400000 * 5, metrics: ['外径尺寸', '圆度'], status: 'completed' },
-    { id: 'report-003', name: 'CNC-003专项分析', createdAt: now - 86400000 * 8, periodStart: now - 86400000 * 15, periodEnd: now - 86400000 * 8, metrics: ['外径尺寸'], status: 'completed' },
+    { id: 'report-001', name: '2024年6月SPC月度分析报告', createdAt: now - 86400000 * 2, periodStart: now - 86400000 * 32, periodEnd: now - 86400000 * 2, metrics: ['外径尺寸', '内径尺寸', '表面粗糙度'], metricNames: ['外径尺寸', '内径尺寸', '表面粗糙度'], status: 'completed' },
+    { id: 'report-002', name: '第一周质量分析报告', createdAt: now - 86400000 * 5, periodStart: now - 86400000 * 12, periodEnd: now - 86400000 * 5, metrics: ['外径尺寸', '圆度'], metricNames: ['外径尺寸', '圆度'], status: 'completed' },
+    { id: 'report-003', name: 'CNC-003专项分析', createdAt: now - 86400000 * 8, periodStart: now - 86400000 * 15, periodEnd: now - 86400000 * 8, metrics: ['外径尺寸'], metricNames: ['外径尺寸'], status: 'completed' },
   ];
 }
 

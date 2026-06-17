@@ -11,7 +11,10 @@ interface ControlChartProps {
 export default function ControlChart({ type, height = 300, title }: ControlChartProps) {
   const chartRef = useRef<HTMLDivElement>(null);
   const chartInstance = useRef<echarts.ECharts | null>(null);
-  const { subgroups, qualityData, controlLimits, alarms, chartType, metricsConfig, currentMetric } = useSPCStore();
+  const {
+    subgroups, qualityData, controlLimits, alarms, chartType,
+    metricsConfig, currentMetric, highlightedDataPoint
+  } = useSPCStore();
 
   const metricConfig = metricsConfig.find(m => m.id === currentMetric);
 
@@ -29,6 +32,7 @@ export default function ControlChart({ type, height = 300, title }: ControlChart
     let lcl = 0;
     let usl: number | undefined;
     let lsl: number | undefined;
+    let dataOffset = 0;
 
     if (type === 'xbar' || type === 'range') {
       xData = subgroups.map((_, i) => i + 1);
@@ -41,16 +45,18 @@ export default function ControlChart({ type, height = 300, title }: ControlChart
         lsl = metricConfig?.lsl;
       }
     } else {
-      xData = qualityData.slice(-50).map((_, i) => i + 1);
+      const sliceStart = Math.max(0, qualityData.length - 50);
+      dataOffset = sliceStart;
+      xData = qualityData.slice(sliceStart).map((_, i) => sliceStart + i + 1);
       if (type === 'i') {
-        yData = qualityData.slice(-50).map(d => d.value);
+        yData = qualityData.slice(sliceStart).map(d => d.value);
         ucl = controlLimits?.ucl || 0;
         cl = controlLimits?.cl || 0;
         lcl = controlLimits?.lcl || 0;
         usl = metricConfig?.usl;
         lsl = metricConfig?.lsl;
       } else {
-        const values = qualityData.slice(-50).map(d => d.value);
+        const values = qualityData.slice(sliceStart).map(d => d.value);
         const mrData: number[] = [0];
         for (let i = 1; i < values.length; i++) {
           mrData.push(Math.abs(values[i] - values[i - 1]));
@@ -63,8 +69,59 @@ export default function ControlChart({ type, height = 300, title }: ControlChart
     }
 
     const violationIndices = new Set(
-      alarms.filter(a => !a.acknowledged).map(a => a.dataPointIndex)
+      alarms.filter(a => !a.acknowledged).map(a => a.dataPointIndex - dataOffset)
     );
+
+    const effectiveHighlightIndex = highlightedDataPoint !== null
+      ? highlightedDataPoint - dataOffset
+      : -1;
+
+    const dataPoints = yData.map((value, index) => {
+      const isViolation = violationIndices.has(index);
+      const isHighlighted = index === effectiveHighlightIndex;
+
+      let itemColor: string;
+      let symbolS = 5;
+      let borderW = 0;
+      let borderC: string | undefined;
+
+      if (isHighlighted) {
+        itemColor = '#10B981';
+        symbolS = 18;
+        borderW = 3;
+        borderC = '#fff';
+      } else if (isViolation) {
+        itemColor = '#EF4444';
+        symbolS = 9;
+        borderW = 2;
+        borderC = '#fff';
+      } else {
+        itemColor = '#3B82F6';
+        symbolS = 5;
+        borderW = 0;
+      }
+
+      return {
+        value,
+        itemStyle: {
+          color: itemColor,
+          borderWidth: borderW,
+          borderColor: borderC,
+          shadowBlur: isHighlighted ? 18 : 0,
+          shadowColor: isHighlighted ? '#10B981' : 'transparent',
+        },
+        symbolSize: symbolS,
+      };
+    });
+
+    const dataLength = xData.length;
+    const showDataZoom = dataLength > 35;
+    const startPct = showDataZoom && effectiveHighlightIndex >= 0
+      ? Math.max(0, Math.min(100, ((Math.max(0, effectiveHighlightIndex - 8)) / dataLength) * 100))
+      : 0;
+    const endPct = showDataZoom && effectiveHighlightIndex >= 0
+      ? Math.max(startPct, Math.min(100, ((Math.min(dataLength - 1, effectiveHighlightIndex + 8)) / dataLength) * 100))
+      : 100;
 
     const option: any = {
       title: title ? {
@@ -81,7 +138,7 @@ export default function ControlChart({ type, height = 300, title }: ControlChart
         left: 60,
         right: 30,
         top: title ? 40 : 20,
-        bottom: 30,
+        bottom: showDataZoom ? 60 : 30,
       },
       tooltip: {
         trigger: 'axis',
@@ -93,14 +150,53 @@ export default function ControlChart({ type, height = 300, title }: ControlChart
         },
         formatter: (params: any) => {
           const data = Array.isArray(params) ? params[0] : params;
+          const idx = Number(data.name) - 1;
+          const relatedAlarms = alarms
+            .filter(a => a.dataPointIndex === idx + dataOffset)
+            .map(a => `${a.ruleName}`);
+          const alarmText = relatedAlarms.length > 0
+            ? `<br/><span style="color:#EF4444">⚠ ${relatedAlarms.join(', ')}</span>`
+            : '';
+          const hlText = idx + dataOffset === highlightedDataPoint
+            ? `<br/><span style="color:#10B981">● 当前定位点</span>`
+            : '';
           return `
             <div style="font-family: 'JetBrains Mono', monospace;">
               样本 #${data.name}<br/>
-              数值: <strong>${Number(data.value).toFixed(3)}</strong>
+              数值: <strong>${Number(data.value).toFixed(4)}</strong>
+              ${alarmText}${hlText}
             </div>
           `;
         },
       },
+      dataZoom: showDataZoom ? [
+        {
+          type: 'inside',
+          start: startPct,
+          end: endPct,
+          zoomLock: false,
+        },
+        {
+          type: 'slider',
+          start: startPct,
+          end: endPct,
+          height: 18,
+          bottom: 8,
+          borderColor: 'transparent',
+          backgroundColor: 'rgba(51, 65, 85, 0.3)',
+          fillerColor: 'rgba(59, 130, 246, 0.25)',
+          handleStyle: { color: '#3B82F6' },
+          textStyle: { color: '#64748B', fontSize: 9 },
+          dataBackground: {
+            lineStyle: { color: '#475569' },
+            areaStyle: { color: 'rgba(71, 85, 105, 0.3)' },
+          },
+          selectedDataBackground: {
+            lineStyle: { color: '#3B82F6' },
+            areaStyle: { color: 'rgba(59, 130, 246, 0.4)' },
+          },
+        },
+      ] : undefined,
       xAxis: {
         type: 'category',
         data: xData,
@@ -125,15 +221,7 @@ export default function ControlChart({ type, height = 300, title }: ControlChart
       series: [
         {
           type: 'line',
-          data: yData.map((value, index) => ({
-            value,
-            itemStyle: {
-              color: violationIndices.has(index) ? '#EF4444' : '#3B82F6',
-              borderWidth: violationIndices.has(index) ? 2 : 0,
-              borderColor: '#fff',
-            },
-            symbolSize: violationIndices.has(index) ? 8 : 5,
-          })),
+          data: dataPoints,
           symbol: 'circle',
           lineStyle: {
             color: '#3B82F6',
@@ -145,6 +233,25 @@ export default function ControlChart({ type, height = 300, title }: ControlChart
               { offset: 1, color: 'rgba(59, 130, 246, 0)' },
             ]),
           },
+          markPoint: effectiveHighlightIndex >= 0 && effectiveHighlightIndex < yData.length ? {
+            symbol: 'pin',
+            symbolSize: 36,
+            itemStyle: { color: '#10B981' },
+            label: {
+              show: true,
+              formatter: '定位',
+              color: '#fff',
+              fontSize: 10,
+              fontWeight: 'bold',
+            },
+            data: [
+              {
+                xAxis: xData[effectiveHighlightIndex],
+                yAxis: yData[effectiveHighlightIndex],
+                value: '定位',
+              },
+            ],
+          } : undefined,
           markLine: {
             silent: true,
             symbol: 'none',
@@ -223,7 +330,7 @@ export default function ControlChart({ type, height = 300, title }: ControlChart
       chartInstance.current?.dispose();
       chartInstance.current = null;
     };
-  }, [subgroups, qualityData, controlLimits, alarms, type, title, metricConfig, chartType]);
+  }, [subgroups, qualityData, controlLimits, alarms, type, title, metricConfig, chartType, highlightedDataPoint]);
 
   return (
     <div ref={chartRef} style={{ width: '100%', height }} />

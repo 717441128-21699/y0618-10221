@@ -1,19 +1,31 @@
 import { useState } from 'react';
-import { FileText, Download, Calendar, Plus, Clock, CheckCircle, FileWarning } from 'lucide-react';
+import { FileText, Download, Calendar, Plus, Clock, CheckCircle, FileWarning, Trash2 } from 'lucide-react';
 import { useSPCStore } from '@/store/useSPCStore';
 
 export default function Reports() {
-  const { reports, metricsConfig, currentMetric } = useSPCStore();
+  const { reports, metricsConfig, currentMetric, generateReport, downloadReportPDF, deleteReport } = useSPCStore();
   const [showGenerateModal, setShowGenerateModal] = useState(false);
   const [selectedMetrics, setSelectedMetrics] = useState<string[]>([currentMetric]);
   const [dateRange, setDateRange] = useState({ start: '', end: '' });
   const [reportName, setReportName] = useState('');
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [error, setError] = useState('');
 
   const formatDate = (timestamp: number) => {
     return new Date(timestamp).toLocaleDateString('zh-CN', {
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
+    });
+  };
+
+  const formatDateTime = (timestamp: number) => {
+    return new Date(timestamp).toLocaleString('zh-CN', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
     });
   };
 
@@ -39,11 +51,57 @@ export default function Reports() {
     }
   };
 
-  const handleGenerate = () => {
-    setShowGenerateModal(false);
-    setReportName('');
-    setSelectedMetrics([currentMetric]);
-    setDateRange({ start: '', end: '' });
+  const handleGenerate = async () => {
+    setError('');
+    
+    if (!reportName.trim()) {
+      setError('请输入报告名称');
+      return;
+    }
+    if (!dateRange.start || !dateRange.end) {
+      setError('请选择时间范围');
+      return;
+    }
+    if (selectedMetrics.length === 0) {
+      setError('请至少选择一个分析指标');
+      return;
+    }
+
+    setIsGenerating(true);
+    try {
+      const periodStart = new Date(dateRange.start).getTime();
+      const periodEnd = new Date(dateRange.end).getTime() + 86400000 - 1;
+      
+      await generateReport({
+        name: reportName.trim(),
+        periodStart,
+        periodEnd,
+        metricIds: selectedMetrics,
+      });
+
+      setShowGenerateModal(false);
+      setReportName('');
+      setSelectedMetrics([currentMetric]);
+      setDateRange({ start: '', end: '' });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '生成报告失败');
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleDownload = async (reportId: string) => {
+    try {
+      await downloadReportPDF(reportId);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : '下载失败');
+    }
+  };
+
+  const handleDelete = (reportId: string, reportName: string) => {
+    if (confirm(`确定要删除报告「${reportName}」吗？此操作不可撤销。`)) {
+      deleteReport(reportId);
+    }
   };
 
   const toggleMetric = (metricId: string) => {
@@ -79,7 +137,13 @@ export default function Reports() {
         </div>
         <div className="spc-card">
           <p className="text-xs text-slate-500 mb-1">本月生成</p>
-          <p className="text-2xl font-bold font-mono text-primary-400">{reports.length}</p>
+          <p className="text-2xl font-bold font-mono text-primary-400">
+            {reports.filter(r => {
+              const now = new Date();
+              const reportDate = new Date(r.createdAt);
+              return reportDate.getMonth() === now.getMonth() && reportDate.getFullYear() === now.getFullYear();
+            }).length}
+          </p>
         </div>
         <div className="spc-card">
           <p className="text-xs text-slate-500 mb-1">已完成</p>
@@ -120,64 +184,82 @@ export default function Reports() {
               </tr>
             </thead>
             <tbody>
-              {reports.map((report) => (
-                <tr
-                  key={report.id}
-                  className="border-b border-dark-border/50 hover:bg-dark-bg/30 transition-colors"
-                >
-                  <td className="py-3 px-4">
-                    <div className="flex items-center gap-2">
-                      <FileText className="w-4 h-4 text-primary-400" />
-                      <span className="font-medium text-slate-200">{report.name}</span>
-                    </div>
-                  </td>
-                  <td className="py-3 px-4">
-                    <div className="flex items-center gap-2">
-                      {getStatusIcon(report.status)}
-                      <span className={`text-xs ${
-                        report.status === 'completed' ? 'text-success' :
-                        report.status === 'generating' ? 'text-warning' : 'text-danger'
-                      }`}>
-                        {getStatusText(report.status)}
-                      </span>
-                    </div>
-                  </td>
-                  <td className="py-3 px-4 text-slate-400 text-xs">
-                    {formatDate(report.periodStart)} ~ {formatDate(report.periodEnd)}
-                  </td>
-                  <td className="py-3 px-4">
-                    <div className="flex flex-wrap gap-1">
-                      {report.metrics.slice(0, 2).map((metric, i) => (
-                        <span key={i} className="px-1.5 py-0.5 text-[10px] bg-primary-500/20 text-primary-400 rounded">
-                          {metric}
-                        </span>
-                      ))}
-                      {report.metrics.length > 2 && (
-                        <span className="px-1.5 py-0.5 text-[10px] bg-slate-700 text-slate-400 rounded">
-                          +{report.metrics.length - 2}
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="py-3 px-4 text-slate-400 text-xs">
-                    {formatDate(report.createdAt)}
-                  </td>
-                  <td className="py-3 px-4">
-                    <div className="flex items-center justify-end gap-2">
-                      <button className="p-1.5 rounded hover:bg-dark-border transition-colors text-slate-400 hover:text-primary-400"
-                              title="预览">
-                        <FileText className="w-4 h-4" />
-                      </button>
-                      <button
-                        className="p-1.5 rounded hover:bg-dark-border transition-colors text-slate-400 hover:text-success"
-                        title="下载PDF"
-                      >
-                        <Download className="w-4 h-4" />
-                      </button>
-                    </div>
+              {reports.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="py-12 text-center text-slate-500">
+                    <FileText className="w-10 h-10 mx-auto mb-2 opacity-50" />
+                    <p>暂无报告记录，点击右上角「生成报告」创建</p>
                   </td>
                 </tr>
-              ))}
+              ) : (
+                reports.map((report) => (
+                  <tr
+                    key={report.id}
+                    className="border-b border-dark-border/50 hover:bg-dark-bg/30 transition-colors"
+                  >
+                    <td className="py-3 px-4">
+                      <div className="flex items-center gap-2">
+                        <FileText className="w-4 h-4 text-primary-400" />
+                        <span className="font-medium text-slate-200">{report.name}</span>
+                      </div>
+                    </td>
+                    <td className="py-3 px-4">
+                      <div className="flex items-center gap-2">
+                        {getStatusIcon(report.status)}
+                        <span className={`text-xs ${
+                          report.status === 'completed' ? 'text-success' :
+                          report.status === 'generating' ? 'text-warning' : 'text-danger'
+                        }`}>
+                          {getStatusText(report.status)}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="py-3 px-4 text-slate-400 text-xs">
+                      {formatDate(report.periodStart)} ~ {formatDate(report.periodEnd)}
+                    </td>
+                    <td className="py-3 px-4">
+                      <div className="flex flex-wrap gap-1">
+                        {report.metricNames.slice(0, 2).map((name, i) => (
+                          <span key={i} className="px-1.5 py-0.5 text-[10px] bg-primary-500/20 text-primary-400 rounded">
+                            {name}
+                          </span>
+                        ))}
+                        {report.metricNames.length > 2 && (
+                          <span className="px-1.5 py-0.5 text-[10px] bg-slate-700 text-slate-400 rounded">
+                            +{report.metricNames.length - 2}
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="py-3 px-4 text-slate-400 text-xs">
+                      {formatDateTime(report.createdAt)}
+                    </td>
+                    <td className="py-3 px-4">
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => handleDownload(report.id)}
+                          disabled={report.status !== 'completed'}
+                          className={`p-1.5 rounded transition-colors ${
+                            report.status === 'completed'
+                              ? 'hover:bg-dark-border text-slate-400 hover:text-success'
+                              : 'text-slate-600 cursor-not-allowed'
+                          }`}
+                          title={report.status === 'completed' ? '下载PDF' : '报告未完成'}
+                        >
+                          <Download className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(report.id, report.name)}
+                          className="p-1.5 rounded hover:bg-dark-border transition-colors text-slate-400 hover:text-danger"
+                          title="删除报告"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
@@ -211,17 +293,23 @@ export default function Reports() {
 
       {showGenerateModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-dark-card border border-dark-border rounded-lg w-[500px] p-6 animate-slide-up">
+          <div className="bg-dark-card border border-dark-border rounded-lg w-[520px] p-6 animate-slide-up max-h-[90vh] overflow-y-auto">
             <h3 className="text-lg font-bold text-white mb-4">生成 SPC 分析报告</h3>
             
+            {error && (
+              <div className="mb-4 p-3 bg-danger/10 border border-danger/30 rounded text-danger text-xs">
+                {error}
+              </div>
+            )}
+
             <div className="space-y-4">
               <div>
-                <label className="text-sm text-slate-400 block mb-1.5">报告名称</label>
+                <label className="text-sm text-slate-400 block mb-1.5">报告名称 <span className="text-danger">*</span></label>
                 <input
                   type="text"
                   value={reportName}
                   onChange={(e) => setReportName(e.target.value)}
-                  placeholder="请输入报告名称"
+                  placeholder="例如：2024年1月第1周SPC分析报告"
                   className="spc-input w-full"
                 />
               </div>
@@ -229,7 +317,7 @@ export default function Reports() {
               <div>
                 <label className="text-sm text-slate-400 block mb-1.5">
                   <Calendar className="w-3.5 h-3.5 inline mr-1" />
-                  时间范围
+                  时间范围 <span className="text-danger">*</span>
                 </label>
                 <div className="flex gap-2">
                   <input
@@ -249,7 +337,7 @@ export default function Reports() {
               </div>
 
               <div>
-                <label className="text-sm text-slate-400 block mb-2">分析指标</label>
+                <label className="text-sm text-slate-400 block mb-2">分析指标 <span className="text-danger">*</span></label>
                 <div className="grid grid-cols-2 gap-2">
                   {metricsConfig.map((metric) => (
                     <label
@@ -277,7 +365,10 @@ export default function Reports() {
                           </svg>
                         )}
                       </span>
-                      <span className="text-sm text-slate-300">{metric.name}</span>
+                      <div className="flex-1 min-w-0">
+                        <span className="text-sm text-slate-300 block truncate">{metric.name}</span>
+                        <span className="text-[10px] text-slate-500">{metric.unit}</span>
+                      </div>
                     </label>
                   ))}
                 </div>
@@ -286,16 +377,22 @@ export default function Reports() {
 
             <div className="flex justify-end gap-3 mt-6">
               <button
-                onClick={() => setShowGenerateModal(false)}
+                onClick={() => {
+                  setShowGenerateModal(false);
+                  setError('');
+                }}
+                disabled={isGenerating}
                 className="spc-btn spc-btn-secondary"
               >
                 取消
               </button>
               <button
                 onClick={handleGenerate}
-                className="spc-btn spc-btn-primary"
+                disabled={isGenerating}
+                className="spc-btn spc-btn-primary flex items-center gap-2"
               >
-                生成报告
+                {isGenerating && <Clock className="w-4 h-4 animate-spin" />}
+                {isGenerating ? '生成中...' : '生成报告'}
               </button>
             </div>
           </div>

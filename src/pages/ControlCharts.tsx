@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useSPCStore } from '@/store/useSPCStore';
 import ControlChart from '@/components/charts/ControlChart';
-import { RefreshCw, Zap, Settings, ChevronDown } from 'lucide-react';
+import { RefreshCw, Zap, Settings, ChevronDown, X, Crosshair } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export default function ControlCharts() {
@@ -20,7 +20,21 @@ export default function ControlCharts() {
     controlLimits,
     alarms,
     processCapability,
+    highlightedDataPoint,
+    setHighlightedDataPoint,
   } = useSPCStore();
+
+  useEffect(() => {
+    if (highlightedDataPoint !== null) {
+      const timer = setTimeout(() => {
+        document.getElementById('control-chart-scroll-target')?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'center',
+        });
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [highlightedDataPoint]);
 
   const [showMetricDropdown, setShowMetricDropdown] = useState(false);
   const [showRulePanel, setShowRulePanel] = useState(true);
@@ -28,8 +42,39 @@ export default function ControlCharts() {
   const currentMetricConfig = metricsConfig.find(m => m.id === currentMetric);
   const unacknowledgedCount = alarms.filter(a => !a.acknowledged).length;
 
+  const highlightedAlarm = highlightedDataPoint !== null
+    ? alarms.find(a => a.dataPointIndex === highlightedDataPoint)
+    : null;
+
   return (
     <div className="space-y-4 animate-fade-in">
+      {highlightedDataPoint !== null && (
+        <div className="flex items-center justify-between px-4 py-2.5 rounded-lg border bg-success/10 border-success/30 animate-slide-up">
+          <div className="flex items-center gap-3">
+            <Crosshair className="w-5 h-5 text-success flex-shrink-0" />
+            <div className="text-sm">
+              <span className="text-success font-medium">
+                已定位到 第 {highlightedDataPoint + 1} 个数据点
+              </span>
+              {highlightedAlarm && (
+                <span className="text-slate-400 ml-3">
+                  {highlightedAlarm.ruleName} · 当前值 {highlightedAlarm.value.toFixed(3)}
+                  {highlightedAlarm.shiftId && ` · ${highlightedAlarm.shiftId}`}
+                  {highlightedAlarm.machineId && ` · ${highlightedAlarm.machineId}`}
+                </span>
+              )}
+            </div>
+          </div>
+          <button
+            onClick={() => setHighlightedDataPoint(null)}
+            className="p-1.5 rounded hover:bg-success/10 text-success hover:text-success-400 transition-colors"
+            title="取消高亮"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-white">控制图分析</h1>
@@ -152,7 +197,7 @@ export default function ControlCharts() {
 
       <div className="grid grid-cols-3 gap-4">
         <div className="col-span-2 space-y-4">
-          <div className="spc-card">
+          <div id="control-chart-scroll-target" className="spc-card scroll-mt-24">
             <div className="spc-card-header">
               <h3 className="spc-card-title">
                 {chartType === 'xbar-r' ? 'Xbar 均值控制图' : 'I 单值控制图'}

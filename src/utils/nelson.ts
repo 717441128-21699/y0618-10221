@@ -218,12 +218,14 @@ function createAlarm(
   dataPointIndex: number,
   value: number,
   metricName: string,
-  timestamp: number
+  timestamp: number,
+  metricId: string = ''
 ): AlarmRecord {
   return {
     id: `${rule.id}-${dataPointIndex}-${Math.random().toString(36).substr(2, 9)}`,
     timestamp,
     metricName,
+    metricId,
     ruleId: rule.id,
     ruleName: rule.name,
     severity: rule.severity,
